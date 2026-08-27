@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Controle de Compras - Riso</title>
   <style>
+    /* VARIÁVEIS DE CORES E TEMA */
     :root {
       --bg: #f8fafc;
       --card-bg: #ffffff;
@@ -30,6 +31,7 @@
       padding-bottom: 80px;
     }
 
+    /* MARCA E CABEÇALHO */
     .header-logo {
       text-align: center;
       margin-top: 4px;
@@ -48,6 +50,7 @@
       color: var(--text);
     }
 
+    /* PAINEL FIXO DE CONTROLES */
     .top-bar {
       position: sticky;
       top: 0;
@@ -105,6 +108,7 @@
     .btn-dark { background-color: #334155; color: white; }
     .btn-danger { background-color: #ef4444; color: white; grid-column: span 2; }
 
+    /* ESTRUTURA DAS CATEGORIAS E ITENS */
     .category {
       background: var(--card-bg);
       border-radius: 8px;
@@ -243,12 +247,12 @@
   </div>
 
   <div id="itemsContainer">
-    <div class="loading-msg">Carregando insumos da planilha...</div>
+    <div class="loading-msg">Carregando insumos do Google Apps Script...</div>
   </div>
 
   <script>
-    // Endpoint da API interna do Google Sheets para extração em JSON estruturado
-    const GVIZ_API_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS4DnkfBewfmVo18mT0wrpybIehODRWFDQuuMqZy0trPsALRMLx7mJVng52kG_GcOHto1VV1NV_0J15/gviz/tq?tqx=out:json&gid=2083885811";
+    // URL DO SEU APPS SCRIPT PUBLICADO
+    const API_URL = "https://script.google.com/macros/s/AKfycbzPUIB-iJ6kVEwpuCFyOPGogzutrhH2DgyRbloeN6-5munbv8QmbAJSYHIOmx5sq7DUew/exec";
 
     let rawData = [];
     let extraItems = JSON.parse(localStorage.getItem("comprasExtraItems")) || [];
@@ -259,51 +263,21 @@
     let viewAlphabetical = false;
 
     /**
-     * LEITURA VIA API DO GOOGLE SHEETS
-     * Faz a requisição JSON direta. Garante que Coluna A (0) = Nome, Coluna B (1) = Categoria e Coluna C (2) = Preço.
+     * Busca dados limpos via API do Google Apps Script
      */
     async function loadData() {
       try {
-        const response = await fetch(GVIZ_API_URL);
-        const textData = await response.text();
+        const response = await fetch(API_URL);
+        const data = await response.json();
         
-        // O Sheets retorna um JSON envolvido por "/*O_o*/ google.visualization.Query.setResponse(...);".
-        // Removemos o wrapper para parsear o JSON limpo.
-        const jsonString = textData.substring(textData.indexOf('{'), textData.lastIndexOf('}') + 1);
-        const json = JSON.parse(jsonString);
-
-        const rows = json.table.rows;
-        rawData = [];
-
-        rows.forEach(row => {
-          const cells = row.c;
-          
-          // Verifica se a linha possui dados na Coluna A
-          if (cells && cells[0] && cells[0].v !== null) {
-            const name = String(cells[0].v).trim();
-            const category = (cells[1] && cells[1].v !== null) ? String(cells[1].v).trim() : "Outros";
-            
-            // Pega o valor formatado de moeda ou o valor bruto
-            let price = "";
-            if (cells[2] && cells[2] !== null) {
-              price = cells[2].f ? cells[2].f : String(cells[2].v);
-            }
-
-            // Descarta o cabeçalho "Ingrediente" caso venha na API
-            if (name.toLowerCase() !== "ingrediente") {
-              rawData.push({
-                name: name,
-                category: category,
-                price: price,
-                isExtra: false
-              });
-            }
-          }
-        });
-
-        render();
+        if (Array.isArray(data)) {
+          rawData = data;
+          render();
+        } else {
+          throw new Error("Formato inválido retornado pela API.");
+        }
       } catch (err) {
-        document.getElementById("itemsContainer").innerHTML = `<div class="loading-msg" style="color:red;">Erro ao carregar os dados via API da planilha.</div>`;
+        document.getElementById("itemsContainer").innerHTML = `<div class="loading-msg" style="color:red;">Erro ao carregar os dados via Apps Script. Verifique a implantação.</div>`;
       }
     }
 
