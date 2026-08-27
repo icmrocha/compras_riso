@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Controle de Compras - Riso</title>
   <style>
+    /* ==========================================================================
+       1. ARQUITETURA DE DESIGN SYSTEM E VARIÁVEIS CSS
+       Uso de CSS Custom Properties para facilitar a manutenção e temas.
+       ========================================================================== */
     :root {
       --bg: #f8fafc;
       --card-bg: #ffffff;
@@ -31,6 +35,7 @@
       padding-bottom: 80px;
     }
 
+    /* LOGOTIPO E MARCA */
     .header-logo {
       text-align: center;
       margin-top: 4px;
@@ -57,6 +62,7 @@
       margin-bottom: 8px;
     }
 
+    /* BARRA FIXA COM COMPORTAMENTO STICKY NO TOPO DA VIEWPORT */
     .top-bar {
       position: sticky;
       top: 0;
@@ -114,6 +120,7 @@
     .btn-dark { background-color: #334155; color: white; }
     .btn-danger { background-color: #ef4444; color: white; grid-column: span 2; }
 
+    /* LAYOUT CARD CATEGORIA */
     .category {
       background: var(--card-bg);
       border-radius: 8px;
@@ -123,6 +130,7 @@
       border-left: 4px solid var(--secondary);
     }
 
+    /* VARIANTES DE CATEGORIA (ITENS ADICIONADOS À MÃO) */
     .category.extra-category {
       border-left-color: var(--extra-tag);
       background-color: #fffbeb;
@@ -140,6 +148,7 @@
       color: #b45309;
     }
 
+    /* LINHA DO INSUMO (LIST ITEM) */
     .item-row {
       display: flex;
       align-items: center;
@@ -151,6 +160,7 @@
 
     .item-row:last-child { border-bottom: none; }
 
+    /* ESTADO CONCLUÍDO / COMPRADO */
     .item-row.completed {
       opacity: 0.4;
     }
@@ -159,6 +169,7 @@
       text-decoration: line-through;
     }
 
+    /* REGRA CSS DE OCULTAÇÃO CONDICIONAL VIA CLASSE PAI NO <body> */
     .hide-completed .item-row.completed {
       display: none !important;
     }
@@ -175,7 +186,7 @@
       height: 20px;
       accent-color: var(--primary);
       cursor: pointer;
-      display: none;
+      display: none; /* Exibido via JS apenas se o item possuir quantidade preenchida */
     }
 
     .has-qty .item-checkbox {
@@ -211,6 +222,7 @@
       border-color: transparent;
     }
 
+    /* INDICADOR VISUAL PARA CAMPOS PREENCHIDOS */
     .item-input.has-value {
       background-color: #ecfdf5;
       border-color: var(--primary);
@@ -228,21 +240,26 @@
 </head>
 <body>
 
+  <!-- ESTRUTURA SEMÂNTICA HTML DO APP -->
   <div class="header-logo">
     <img src="logo.png" alt="Logo RISO" class="logo">
   </div>
 
   <h1>Controle de Compras - Riso</h1>
+  <!-- ÁREA DE FEEDBACK EM TEMPO REAL SOBRE SINCRONIZAÇÃO COM A API -->
   <div id="syncStatus" class="sync-status">Sincronizando...</div>
 
   <div class="top-bar">
+    <!-- INPUT DE BUSCA INSTANTÂNEA -->
     <input type="text" id="searchInput" class="search-box" placeholder="Buscar insumo..." oninput="render()">
 
+    <!-- FORMULÁRIO DE INSERÇÃO DINÂMICA DE INSUMOS LOCAIS -->
     <form class="add-extra-container" onsubmit="addExtraItem(event)">
       <input type="text" id="extraItemInput" class="add-extra-input" placeholder="Adicionar item extra à mão..." />
       <button type="submit" class="btn btn-secondary" style="padding: 0 12px;">+ Adicionar</button>
     </form>
 
+    <!-- PAINEL DE AÇÕES DE INTERFACE -->
     <div class="controls-grid">
       <button class="btn btn-secondary" id="btnFilterToBuy" onclick="toggleFilterToBuy()">Ver só o que comprar</button>
       <button class="btn btn-dark" id="btnHideCompleted" onclick="toggleHideCompleted()">Ocultar Itens Marcados</button>
@@ -251,33 +268,48 @@
     </div>
   </div>
 
+  <!-- CONTAINER DE INJEÇÃO DO DOM (RENDER ENGINE) -->
   <div id="itemsContainer">
     <div class="loading-msg">Carregando insumos...</div>
   </div>
 
   <script>
+    /* ==========================================================================
+       2. CONFIGURAÇÕES GLOBAIS E ENDPOINTS DA API
+       ========================================================================== */
+    // Endpoint do Google Apps Script publicado como Web App (Atua como Backend REST)
     const API_URL = "https://script.google.com/macros/s/AKfycbzPUIB-iJ6kVEwpuCFyOPGogzutrhH2DgyRbloeN6-5munbv8QmbAJSYHIOmx5sq7DUew/exec";
 
-    let rawData = [];
-    let extraItems = [];
-    let savedState = {};
-    let isSaving = false;
-    let syncTimer = null;
+    /* ==========================================================================
+       3. GERENCIAMENTO DE ESTADO (APPLICATION STATE MANAGEMENT)
+       ========================================================================== */
+    let rawData = [];           // Array master com os itens base vindos do Sheets
+    let extraItems = [];        // Array com os itens adicionados manualmente na sessão
+    let savedState = {};        // Hashmap de quantidades e checkboxes: { "Insumo": { qty: "2kg", done: true } }
+    let isSaving = false;       // Flag de trava/mutex para operações de I/O em andamento
+    let syncTimer = null;       // Referência de timer para o mecanismo de Debounce
 
+    // FLAGS DE ESTADO DE INTERFACE (UI STATES)
     let filterOnlyToBuy = false;
     let hideCompleted = false;
     let viewAlphabetical = false;
 
+    /* ==========================================================================
+       4. COMUNICAÇÃO ASSÍNCRONA E SINCRONIZAÇÃO (REST / FETCH API)
+       ========================================================================== */
+
     /**
-     * Carrega e mescla dados sem sobrescrever o campo que o usuário está editando no momento
+     * Requisita o estado atualizado do backend (Google Apps Script / Sheets)
+     * Implementa 'Guards' contra sobrescrita durante digitação do usuário.
      */
     async function loadData() {
-      // REGRA 1: Se o usuário estiver com foco em algum campo de texto, NÃO atualiza a tela para não zerar
+      // GUARD 1: Se um input de texto estiver focado, ignora o re-render automático para não travar o teclado
       const activeElement = document.activeElement;
-      if (activeElement && (activeElement.tagName === "INPUT" || activeElement.tagName === "TEXTAREA")) {
+      if (activeElement && activeElement.tagName === "INPUT" && activeElement.type === "text") {
         return;
       }
 
+      // GUARD 2: Se uma gravação (POST) estiver em curso, adia a leitura para evitar Race Conditions
       if (isSaving) return;
 
       const statusEl = document.getElementById("syncStatus");
@@ -289,9 +321,8 @@
           rawData = data.masterList;
           extraItems = data.extraItems || [];
           
-          // REGRA 2: Mesclagem inteligente (Merge) do Estado
-          const remoteState = data.savedState || {};
-          savedState = { ...remoteState, ...savedState };
+          // Sincroniza o estado de caixas e quantidades de acordo com a nuvem
+          savedState = data.savedState || {};
 
           statusEl.innerText = "✓ Atualizado em tempo real";
           render();
@@ -302,18 +333,24 @@
     }
 
     /**
-     * Envia instantaneamente com Debounce (Evita múltiplas requisições picadas)
+     * Implementação do Padrão Debounce:
+     * Retarda o disparo do envio HTTP enquanto o usuário estiver digitando consecutivamente.
      */
     function triggerSync() {
       const statusEl = document.getElementById("syncStatus");
       statusEl.innerText = "Aguardando término da digitação...";
       
+      // Reinicia o temporizador a cada caractere inserido
       clearTimeout(syncTimer);
       syncTimer = setTimeout(() => {
         syncToCloud("SAVE");
-      }, 800); // Aguarda 800ms após a última digitação para salvar na nuvem
+      }, 800); // Aguarda 800ms de inatividade do teclado
     }
 
+    /**
+     * Envia o estado atual via requisição HTTP POST para o Apps Script
+     * @param {string} actionType "SAVE" para persistir ou "RESET" para zerar a compra
+     */
     function syncToCloud(actionType = "SAVE") {
       const statusEl = document.getElementById("syncStatus");
       statusEl.innerText = "Salvando na nuvem...";
@@ -325,13 +362,17 @@
 
       fetch(API_URL, {
         method: "POST",
-        mode: "no-cors",
+        mode: "no-cors", // Requisito para requisições cross-origin com Apps Script sem pre-flight CORS complexo
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(bodyData)
       })
       .then(() => {
         statusEl.innerText = "✓ Salvo na nuvem";
-        setTimeout(() => { isSaving = false; }, 1500);
+        setTimeout(() => { 
+          isSaving = false;
+          // Executa releitura assim que a gravação é concluída para sincronizar a sessão
+          loadData();
+        }, 1200);
       })
       .catch(err => {
         statusEl.innerText = "⚠ Erro ao salvar na nuvem";
@@ -339,6 +380,13 @@
       });
     }
 
+    /* ==========================================================================
+       5. MANIPULADORES DE EVENTOS E LÓGICA DE NEGÓCIO
+       ========================================================================== */
+
+    /**
+     * Adiciona um insumo pontual à lista sob a categoria "(Adicionados à mão)"
+     */
     function addExtraItem(e) {
       e.preventDefault();
       const input = document.getElementById("extraItemInput");
@@ -346,6 +394,7 @@
       
       if (!name) return;
 
+      // Validação de redundância
       const exists = rawData.some(i => i.name.toLowerCase() === name.toLowerCase()) || 
                      extraItems.some(i => i.name.toLowerCase() === name.toLowerCase());
 
@@ -358,7 +407,7 @@
         };
         
         extraItems.unshift(newExtra);
-        savedState[name] = { qty: "1", done: false };
+        savedState[name] = { qty: "1", done: false }; // Inicializa com quantidade padrão
 
         render();
         syncToCloud("SAVE");
@@ -367,15 +416,19 @@
       input.value = "";
     }
 
+    /**
+     * Handler do evento de alteração de quantidade no Input
+     */
     function updateQty(itemName, val) {
       if (!savedState[itemName]) savedState[itemName] = { qty: "", done: false };
       savedState[itemName].qty = val;
       
+      // Se a quantidade for esvaziada, reseta a seleção do checkbox
       if (!val.trim()) {
         savedState[itemName].done = false;
       }
 
-      // Atualiza o estilo visual do campo sem reconstruir a árvore do DOM (mantém a fluidez do cursor)
+      // Manipulação direta de classe CSS no DOM para performance (sem reconstrução inteira do componente)
       const inputEl = document.getElementById(`qty-${slugify(itemName)}`);
       if (inputEl) {
         if (val.trim()) {
@@ -385,10 +438,18 @@
         }
       }
 
-      triggerSync();
+      triggerSync(); // Dispara o debounce
     }
 
+    /**
+     * Handler do evento de clique na Checkbox (Comprado/Pendente)
+     */
     function toggleDone(itemName) {
+      // Remove o foco de qualquer campo ativo para garantir a liberação da thread de sincronização
+      if (document.activeElement) {
+        document.activeElement.blur();
+      }
+
       if (!savedState[itemName]) savedState[itemName] = { qty: "", done: false };
       savedState[itemName].done = !savedState[itemName].done;
       
@@ -396,10 +457,14 @@
       syncToCloud("SAVE");
     }
 
+    /**
+     * Helper para sanitização de strings utilizadas em IDs HTML
+     */
     function slugify(text) {
       return text.toString().toLowerCase().replace(/\s+/g, '-').replace(/[^\w\-]+/g, '');
     }
 
+    /* CONTROLES DE INTERFACE (TOGGLES) */
     function toggleFilterToBuy() {
       filterOnlyToBuy = !filterOnlyToBuy;
       const btn = document.getElementById("btnFilterToBuy");
@@ -445,6 +510,9 @@
       }
     }
 
+    /**
+     * Função utilitária de agrupamento via Array.prototype.reduce()
+     */
     function groupByCategory(items) {
       return items.reduce((acc, item) => {
         (acc[item.category] = acc[item.category] || []).push(item);
@@ -452,19 +520,19 @@
       }, {});
     }
 
+    /* ==========================================================================
+       6. MOTOR DE RENDERIZAÇÃO DO DOM (DOM RENDER ENGINE)
+       ========================================================================== */
     function render() {
-      // Impede re-renderização completa se o usuário estiver focando em algum campo de texto
-      const activeElement = document.activeElement;
-      if (activeElement && activeElement.tagName === "INPUT" && activeElement.type === "text" && activeElement.id !== "searchInput") {
-        return;
-      }
-
       const container = document.getElementById("itemsContainer");
       container.innerHTML = "";
 
       const query = document.getElementById("searchInput").value.toLowerCase();
+      
+      // Concatena a lista de adicionados à mão no topo da coleção
       const allItems = [...extraItems, ...rawData];
 
+      // Pipeline de filtragem (Busca + Filtro de compra ativa)
       const filtered = allItems.filter(item => {
         const itemState = savedState[item.name] || { qty: "", done: false };
         const hasQty = itemState.qty && itemState.qty.trim() !== "";
@@ -480,6 +548,7 @@
         return;
       }
 
+      // RENDER MODO 1: ORDEM ALFABÉTICA ÚNICA
       if (viewAlphabetical) {
         filtered.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
         
@@ -491,7 +560,9 @@
         });
         
         container.appendChild(cardDiv);
-      } else {
+      } 
+      // RENDER MODO 2: AGRUPADO POR CATEGORIA
+      else {
         const grouped = groupByCategory(filtered);
 
         for (const [catName, items] of Object.entries(grouped)) {
@@ -512,6 +583,10 @@
       }
     }
 
+    /**
+     * Constrói programmaticamente o elemento HTML de cada insumo via DOM API
+     * (Evita uso de innerHTML inline para prevenir falhas com aspas ou caracteres especiais no texto)
+     */
     function renderRow(item, parentContainer) {
       const itemState = savedState[item.name] || { qty: "", done: false };
       const hasQty = itemState.qty && itemState.qty.trim() !== "";
@@ -561,11 +636,14 @@
       parentContainer.appendChild(row);
     }
 
-    // Inicialização
+    /* ==========================================================================
+       7. INICIALIZAÇÃO DA APLICAÇÃO E POLLING LOOP
+       ========================================================================== */
+    // Executa a primeira carga assim que o DOM está pronto
     loadData();
 
-    // Consulta e sincroniza as atualizações a cada 8 segundos (apenas se a tela não estiver em edição)
-    setInterval(loadData, 8000);
+    // Loop de Polling: Consulta a nuvem a cada 5000ms para manter os dispositivos emparelhados
+    setInterval(loadData, 5000);
   </script>
 </body>
 </html>
