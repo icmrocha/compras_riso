@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Controle de Compras - Riso</title>
   <style>
-    /* VARIÁVEIS DE CORES E TEMA */
     :root {
       --bg: #f8fafc;
       --card-bg: #ffffff;
@@ -15,6 +14,7 @@
       --secondary: #2563eb;
       --border: #e2e8f0;
       --muted: #64748b;
+      --extra-tag: #f59e0b;
     }
 
     * { box-sizing: border-box; }
@@ -31,11 +31,10 @@
       padding-bottom: 80px;
     }
 
-    /* MARCA E CABEÇALHO */
     .header-logo {
       text-align: center;
       margin-top: 4px;
-      margin-bottom: 12px;
+      margin-bottom: 8px;
     }
 
     .logo {
@@ -46,11 +45,18 @@
     h1 {
       font-size: 1.2rem;
       text-align: center;
-      margin: 0 0 12px 0;
+      margin: 0 0 4px 0;
       color: var(--text);
     }
 
-    /* PAINEL FIXO DE CONTROLES */
+    .sync-status {
+      text-align: center;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
     .top-bar {
       position: sticky;
       top: 0;
@@ -108,7 +114,6 @@
     .btn-dark { background-color: #334155; color: white; }
     .btn-danger { background-color: #ef4444; color: white; grid-column: span 2; }
 
-    /* ESTRUTURA DAS CATEGORIAS E ITENS */
     .category {
       background: var(--card-bg);
       border-radius: 8px;
@@ -118,12 +123,22 @@
       border-left: 4px solid var(--secondary);
     }
 
+    /* Destaque para a Categoria de Extras */
+    .category.extra-category {
+      border-left-color: var(--extra-tag);
+      background-color: #fffbeb;
+    }
+
     .category-title {
       font-weight: 700;
       font-size: 0.85rem;
       text-transform: uppercase;
       color: var(--muted);
       margin-bottom: 8px;
+    }
+
+    .category.extra-category .category-title {
+      color: #b45309;
     }
 
     .item-row {
@@ -178,16 +193,6 @@
       font-size: 0.95rem;
     }
 
-    .item-tag-extra {
-      font-size: 0.65rem;
-      background: #e0f2fe;
-      color: #0369a1;
-      padding: 2px 6px;
-      border-radius: 4px;
-      margin-left: 6px;
-      font-weight: normal;
-    }
-
     .item-price {
       font-size: 0.75rem;
       color: var(--muted);
@@ -229,12 +234,13 @@
   </div>
 
   <h1>Controle de Compras - Riso</h1>
+  <div id="syncStatus" class="sync-status">Sincronizando...</div>
 
   <div class="top-bar">
     <input type="text" id="searchInput" class="search-box" placeholder="Buscar insumo..." oninput="render()">
 
     <form class="add-extra-container" onsubmit="addExtraItem(event)">
-      <input type="text" id="extraItemInput" class="add-extra-input" placeholder="Adicionar item extra na hora..." />
+      <input type="text" id="extraItemInput" class="add-extra-input" placeholder="Adicionar item extra à mão..." />
       <button type="submit" class="btn btn-secondary" style="padding: 0 12px;">+ Adicionar</button>
     </form>
 
@@ -247,45 +253,75 @@
   </div>
 
   <div id="itemsContainer">
-    <div class="loading-msg">Carregando insumos do Google Apps Script...</div>
+    <div class="loading-msg">Carregando insumos...</div>
   </div>
 
   <script>
-    // URL DO SEU APPS SCRIPT PUBLICADO
     const API_URL = "https://script.google.com/macros/s/AKfycbzPUIB-iJ6kVEwpuCFyOPGogzutrhH2DgyRbloeN6-5munbv8QmbAJSYHIOmx5sq7DUew/exec";
 
     let rawData = [];
-    let extraItems = JSON.parse(localStorage.getItem("comprasExtraItems")) || [];
-    let savedState = JSON.parse(localStorage.getItem("comprasInsumosState")) || {};
+    let extraItems = [];
+    let savedState = {};
+    let isSaving = false;
     
     let filterOnlyToBuy = false;
     let hideCompleted = false;
     let viewAlphabetical = false;
 
     /**
-     * Busca dados limpos via API do Google Apps Script
+     * Sincronização em tempo real da nuvem
      */
     async function loadData() {
+      if (isSaving) return;
+
+      const statusEl = document.getElementById("syncStatus");
       try {
         const response = await fetch(API_URL);
         const data = await response.json();
         
-        if (Array.isArray(data)) {
-          rawData = data;
+        if (data.masterList && Array.isArray(data.masterList)) {
+          rawData = data.masterList;
+          extraItems = data.extraItems || [];
+          savedState = data.savedState || {};
+          statusEl.innerText = "✓ Atualizado em tempo real";
           render();
-        } else {
-          throw new Error("Formato inválido retornado pela API.");
         }
       } catch (err) {
-        document.getElementById("itemsContainer").innerHTML = `<div class="loading-msg" style="color:red;">Erro ao carregar os dados via Apps Script. Verifique a implantação.</div>`;
+        statusEl.innerText = "⚠ Erro de conexão";
       }
     }
 
-    function saveState() {
-      localStorage.setItem("comprasInsumosState", JSON.stringify(savedState));
-      localStorage.setItem("comprasExtraItems", JSON.stringify(extraItems));
+    /**
+     * Salva as alterações na nuvem para sincronizar ambos os celulares
+     */
+    function syncToCloud(actionType = "SAVE") {
+      const statusEl = document.getElementById("syncStatus");
+      statusEl.innerText = "Salvando na nuvem...";
+      isSaving = true;
+
+      const bodyData = actionType === "RESET" 
+        ? { action: "RESET" } 
+        : { action: "SAVE", savedState: savedState, extraItems: extraItems };
+
+      fetch(API_URL, {
+        method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(bodyData)
+      })
+      .then(() => {
+        statusEl.innerText = "✓ Salvo na nuvem";
+        setTimeout(() => { isSaving = false; }, 2000);
+      })
+      .catch(err => {
+        statusEl.innerText = "⚠ Erro ao salvar na nuvem";
+        isSaving = false;
+      });
     }
 
+    /**
+     * Adiciona item extra na categoria (Adicionados à mão)
+     */
     function addExtraItem(e) {
       e.preventDefault();
       const input = document.getElementById("extraItemInput");
@@ -297,14 +333,18 @@
                      extraItems.some(i => i.name.toLowerCase() === name.toLowerCase());
 
       if (!exists) {
-        extraItems.push({
+        const newExtra = {
           name: name,
-          category: "Itens Extras Adicionados",
+          category: "(Adicionados à mão)",
           price: "",
           isExtra: true
-        });
-        saveState();
+        };
+        
+        extraItems.unshift(newExtra); // Adiciona no início da lista de extras
+        savedState[name] = { qty: "1", done: false }; // Define quantidade padrão inicial
+
         render();
+        syncToCloud("SAVE");
       }
       
       input.value = "";
@@ -318,15 +358,16 @@
         savedState[itemName].done = false;
       }
 
-      saveState();
       render();
+      syncToCloud("SAVE");
     }
 
     function toggleDone(itemName) {
       if (!savedState[itemName]) savedState[itemName] = { qty: "", done: false };
       savedState[itemName].done = !savedState[itemName].done;
-      saveState();
+      
       render();
+      syncToCloud("SAVE");
     }
 
     function toggleFilterToBuy() {
@@ -369,8 +410,8 @@
       if (confirm("Deseja zerar todas as quantidades, marcações e itens extras para iniciar uma nova compra?")) {
         savedState = {};
         extraItems = [];
-        saveState();
         render();
+        syncToCloud("RESET");
       }
     }
 
@@ -386,7 +427,9 @@
       container.innerHTML = "";
 
       const query = document.getElementById("searchInput").value.toLowerCase();
-      const allItems = [...rawData, ...extraItems];
+      
+      // Garante que a lista de extras fique em primeiro plano
+      const allItems = [...extraItems, ...rawData];
 
       const filtered = allItems.filter(item => {
         const itemState = savedState[item.name] || { qty: "", done: false };
@@ -419,7 +462,7 @@
 
         for (const [catName, items] of Object.entries(grouped)) {
           const catDiv = document.createElement("div");
-          catDiv.className = "category";
+          catDiv.className = `category ${catName === '(Adicionados à mão)' ? 'extra-category' : ''}`;
 
           const catTitle = document.createElement("div");
           catTitle.className = "category-title";
@@ -456,14 +499,7 @@
 
       const itemName = document.createElement("span");
       itemName.className = "item-name";
-      itemName.textContent = item.name + " ";
-
-      if (item.isExtra) {
-        const tagExtra = document.createElement("span");
-        tagExtra.className = "item-tag-extra";
-        tagExtra.textContent = "Extra";
-        itemName.appendChild(tagExtra);
-      }
+      itemName.textContent = item.name;
 
       itemInfo.appendChild(itemName);
 
@@ -484,13 +520,17 @@
       inputQty.value = itemState.qty;
       inputQty.addEventListener("change", (e) => updateQty(item.name, e.target.value));
 
-      row.appendChild(itemLeft);
       row.appendChild(inputQty);
+      row.appendChild(itemLeft);
 
       parentContainer.appendChild(row);
     }
 
+    // Inicializa a aplicação
     loadData();
+
+    // Consulta e sincroniza as atualizações a cada 6 segundos
+    setInterval(loadData, 6000);
   </script>
 </body>
 </html>
