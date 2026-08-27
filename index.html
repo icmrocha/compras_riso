@@ -123,7 +123,6 @@
       border-left: 4px solid var(--secondary);
     }
 
-    /* Destaque para a Categoria de Extras */
     .category.extra-category {
       border-left-color: var(--extra-tag);
       background-color: #fffbeb;
@@ -263,15 +262,22 @@
     let extraItems = [];
     let savedState = {};
     let isSaving = false;
-    
+    let syncTimer = null;
+
     let filterOnlyToBuy = false;
     let hideCompleted = false;
     let viewAlphabetical = false;
 
     /**
-     * Sincronização em tempo real da nuvem
+     * Carrega e mescla dados sem sobrescrever o campo que o usuário está editando no momento
      */
     async function loadData() {
+      // REGRA 1: Se o usuário estiver com foco em algum campo de texto, NÃO atualiza a tela para não zerar
+      const activeElement = document.activeElement;
+      if (activeElement && (activeElement.tagName === "INPUT" || activeElement.tagName === "TEXTAREA")) {
+        return;
+      }
+
       if (isSaving) return;
 
       const statusEl = document.getElementById("syncStatus");
@@ -282,7 +288,11 @@
         if (data.masterList && Array.isArray(data.masterList)) {
           rawData = data.masterList;
           extraItems = data.extraItems || [];
-          savedState = data.savedState || {};
+          
+          // REGRA 2: Mesclagem inteligente (Merge) do Estado
+          const remoteState = data.savedState || {};
+          savedState = { ...remoteState, ...savedState };
+
           statusEl.innerText = "✓ Atualizado em tempo real";
           render();
         }
@@ -292,8 +302,18 @@
     }
 
     /**
-     * Salva as alterações na nuvem para sincronizar ambos os celulares
+     * Envia instantaneamente com Debounce (Evita múltiplas requisições picadas)
      */
+    function triggerSync() {
+      const statusEl = document.getElementById("syncStatus");
+      statusEl.innerText = "Aguardando término da digitação...";
+      
+      clearTimeout(syncTimer);
+      syncTimer = setTimeout(() => {
+        syncToCloud("SAVE");
+      }, 800); // Aguarda 800ms após a última digitação para salvar na nuvem
+    }
+
     function syncToCloud(actionType = "SAVE") {
       const statusEl = document.getElementById("syncStatus");
       statusEl.innerText = "Salvando na nuvem...";
@@ -311,7 +331,7 @@
       })
       .then(() => {
         statusEl.innerText = "✓ Salvo na nuvem";
-        setTimeout(() => { isSaving = false; }, 2000);
+        setTimeout(() => { isSaving = false; }, 1500);
       })
       .catch(err => {
         statusEl.innerText = "⚠ Erro ao salvar na nuvem";
@@ -319,9 +339,6 @@
       });
     }
 
-    /**
-     * Adiciona item extra na categoria (Adicionados à mão)
-     */
     function addExtraItem(e) {
       e.preventDefault();
       const input = document.getElementById("extraItemInput");
@@ -340,8 +357,8 @@
           isExtra: true
         };
         
-        extraItems.unshift(newExtra); // Adiciona no início da lista de extras
-        savedState[name] = { qty: "1", done: false }; // Define quantidade padrão inicial
+        extraItems.unshift(newExtra);
+        savedState[name] = { qty: "1", done: false };
 
         render();
         syncToCloud("SAVE");
@@ -358,8 +375,17 @@
         savedState[itemName].done = false;
       }
 
-      render();
-      syncToCloud("SAVE");
+      // Atualiza o estilo visual do campo sem reconstruir a árvore do DOM (mantém a fluidez do cursor)
+      const inputEl = document.getElementById(`qty-${slugify(itemName)}`);
+      if (inputEl) {
+        if (val.trim()) {
+          inputEl.classList.add("has-value");
+        } else {
+          inputEl.classList.remove("has-value");
+        }
+      }
+
+      triggerSync();
     }
 
     function toggleDone(itemName) {
@@ -368,6 +394,10 @@
       
       render();
       syncToCloud("SAVE");
+    }
+
+    function slugify(text) {
+      return text.toString().toLowerCase().replace(/\s+/g, '-').replace(/[^\w\-]+/g, '');
     }
 
     function toggleFilterToBuy() {
@@ -423,12 +453,16 @@
     }
 
     function render() {
+      // Impede re-renderização completa se o usuário estiver focando em algum campo de texto
+      const activeElement = document.activeElement;
+      if (activeElement && activeElement.tagName === "INPUT" && activeElement.type === "text" && activeElement.id !== "searchInput") {
+        return;
+      }
+
       const container = document.getElementById("itemsContainer");
       container.innerHTML = "";
 
       const query = document.getElementById("searchInput").value.toLowerCase();
-      
-      // Garante que a lista de extras fique em primeiro plano
       const allItems = [...extraItems, ...rawData];
 
       const filtered = allItems.filter(item => {
@@ -515,10 +549,11 @@
 
       const inputQty = document.createElement("input");
       inputQty.type = "text";
+      inputQty.id = `qty-${slugify(item.name)}`;
       inputQty.className = `item-input ${hasQty ? 'has-value' : ''}`;
       inputQty.placeholder = "Qtd...";
       inputQty.value = itemState.qty;
-      inputQty.addEventListener("change", (e) => updateQty(item.name, e.target.value));
+      inputQty.addEventListener("input", (e) => updateQty(item.name, e.target.value));
 
       row.appendChild(inputQty);
       row.appendChild(itemLeft);
@@ -526,11 +561,11 @@
       parentContainer.appendChild(row);
     }
 
-    // Inicializa a aplicação
+    // Inicialização
     loadData();
 
-    // Consulta e sincroniza as atualizações a cada 6 segundos
-    setInterval(loadData, 6000);
+    // Consulta e sincroniza as atualizações a cada 8 segundos (apenas se a tela não estiver em edição)
+    setInterval(loadData, 8000);
   </script>
 </body>
 </html>
