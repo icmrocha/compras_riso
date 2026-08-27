@@ -3,9 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Controle de Compras - Insumos RISO</title>
+  <title>Controle de Compras - Riso</title>
   <style>
-    /* VARIABLES DE DESIGN SYSTEM */
     :root {
       --bg: #f8fafc;
       --card-bg: #ffffff;
@@ -31,7 +30,6 @@
       padding-bottom: 80px;
     }
 
-    /* CABEÇALHO & LOGO */
     .header-logo {
       text-align: center;
       margin-top: 4px;
@@ -50,7 +48,6 @@
       color: var(--text);
     }
 
-    /* BARRA FIXA SUPERIOR (CONTROLES) */
     .top-bar {
       position: sticky;
       top: 0;
@@ -69,7 +66,6 @@
       box-shadow: 0 1px 3px rgba(0,0,0,0.05);
     }
 
-    /* FORMULÁRIO DE ADIÇÃO DE ITEM EXTRA */
     .add-extra-container {
       display: flex;
       gap: 6px;
@@ -84,7 +80,6 @@
       font-size: 0.85rem;
     }
 
-    /* GRID DE BOTÕES DE AÇÃO */
     .controls-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -110,7 +105,6 @@
     .btn-dark { background-color: #334155; color: white; }
     .btn-danger { background-color: #ef4444; color: white; grid-column: span 2; }
 
-    /* ESTILIZAÇÃO DAS CATEGORIAS E ITENS */
     .category {
       background: var(--card-bg);
       border-radius: 8px;
@@ -147,7 +141,6 @@
       text-decoration: line-through;
     }
 
-    /* OCULTA ITENS COMPRADOS QUANDO A CLASSE .hide-completed ESTIVER NO BODY */
     .hide-completed .item-row.completed {
       display: none !important;
     }
@@ -159,7 +152,6 @@
       gap: 10px;
     }
 
-    /* CHECKBOXES APARECEM APENAS PARA ITENS COM QUANTIDADE PREENCHIDA */
     .item-checkbox {
       width: 20px;
       height: 20px;
@@ -228,25 +220,20 @@
 </head>
 <body>
 
-  <!-- LOGO DO RESTAURANTE -->
   <div class="header-logo">
     <img src="logo.png" alt="Logo RISO" class="logo">
   </div>
 
-  <h1>Controle de Lista de Compras</h1>
+  <h1>Controle de Compras - Riso</h1>
 
-  <!-- PAINEL FIXO DE CONTROLES -->
   <div class="top-bar">
-    <!-- Campo de Busca em Tempo Real -->
     <input type="text" id="searchInput" class="search-box" placeholder="Buscar insumo..." oninput="render()">
 
-    <!-- Form para adicionar item pontual que não está no Sheets -->
     <form class="add-extra-container" onsubmit="addExtraItem(event)">
       <input type="text" id="extraItemInput" class="add-extra-input" placeholder="Adicionar item extra na hora..." />
       <button type="submit" class="btn btn-secondary" style="padding: 0 12px;">+ Adicionar</button>
     </form>
 
-    <!-- Botões de Filtragem e Ações -->
     <div class="controls-grid">
       <button class="btn btn-secondary" id="btnFilterToBuy" onclick="toggleFilterToBuy()">Ver só o que comprar</button>
       <button class="btn btn-dark" id="btnHideCompleted" onclick="toggleHideCompleted()">Ocultar Itens Marcados</button>
@@ -255,95 +242,76 @@
     </div>
   </div>
 
-  <!-- CONTAINER ONDE OS ITENS SERÃO RENDERIZADOS DINAMICAMENTE -->
   <div id="itemsContainer">
     <div class="loading-msg">Carregando insumos da planilha...</div>
   </div>
 
   <script>
-    // URL publica do CSV da aba 'Lista de Insumos' no Google Sheets
-    const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS4DnkfBewfmVo18mT0wrpybIehODRWFDQuuMqZy0trPsALRMLx7mJVng52kG_GcOHto1VV1NV_0J15/pub?gid=2083885811&single=true&output=csv";
+    // Endpoint da API interna do Google Sheets para extração em JSON estruturado
+    const GVIZ_API_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS4DnkfBewfmVo18mT0wrpybIehODRWFDQuuMqZy0trPsALRMLx7mJVng52kG_GcOHto1VV1NV_0J15/gviz/tq?tqx=out:json&gid=2083885811";
 
-    // Variáveis Globais de Estado
-    let rawData = []; // Recebe os insumos vindos da planilha
-    let extraItems = JSON.parse(localStorage.getItem("comprasExtraItems")) || []; // Itens criados na hora
-    let savedState = JSON.parse(localStorage.getItem("comprasInsumosState")) || {}; // { "Item": { qty: "2kg", done: false } }
+    let rawData = [];
+    let extraItems = JSON.parse(localStorage.getItem("comprasExtraItems")) || [];
+    let savedState = JSON.parse(localStorage.getItem("comprasInsumosState")) || {};
     
-    // Filtros de exibição
     let filterOnlyToBuy = false;
     let hideCompleted = false;
     let viewAlphabetical = false;
 
     /**
-     * Parser para converter o CSV público em Array de Objetos.
-     * Suporta aspas duplas e caracteres especiais sem quebrar colunas.
-     */
-    function parseCSV(text) {
-      const lines = text.split(/\r\n|\n/);
-      const result = [];
-
-      for (let i = 1; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (!line) continue;
-
-        // Expressão para separar por vírgulas respeitando textos delimitados por aspas
-        const cols = [];
-        let insideQuotes = false;
-        let entry = '';
-
-        for (let char of line) {
-          if (char === '"') {
-            insideQuotes = !insideQuotes;
-          } else if (char === ',' && !insideQuotes) {
-            cols.push(entry.trim());
-            entry = '';
-          } else {
-            entry += char;
-          }
-        }
-        cols.push(entry.trim());
-
-        // Limpa aspas sobressalentes dos textos
-        const cleanCols = cols.map(c => c.replace(/^"|"$/g, '').trim());
-
-        // Coluna 0 (A) = Ingrediente, Coluna 1 (B) = Categoria, Coluna 2 (C) = Preço Médio
-        if (cleanCols[0] && cleanCols[0] !== 'Ingrediente') {
-          result.push({
-            name: cleanCols[0],
-            category: cleanCols[1] || 'Outros',
-            price: cleanCols[2] || '',
-            isExtra: false
-          });
-        }
-      }
-      return result;
-    }
-
-    /**
-     * Busca os dados atualizados do Sheets via requisição HTTP
+     * LEITURA VIA API DO GOOGLE SHEETS
+     * Faz a requisição JSON direta. Garante que Coluna A (0) = Nome, Coluna B (1) = Categoria e Coluna C (2) = Preço.
      */
     async function loadData() {
       try {
-        const response = await fetch(CSV_URL);
-        const csvText = await response.text();
-        rawData = parseCSV(csvText);
+        const response = await fetch(GVIZ_API_URL);
+        const textData = await response.text();
+        
+        // O Sheets retorna um JSON envolvido por "/*O_o*/ google.visualization.Query.setResponse(...);".
+        // Removemos o wrapper para parsear o JSON limpo.
+        const jsonString = textData.substring(textData.indexOf('{'), textData.lastIndexOf('}') + 1);
+        const json = JSON.parse(jsonString);
+
+        const rows = json.table.rows;
+        rawData = [];
+
+        rows.forEach(row => {
+          const cells = row.c;
+          
+          // Verifica se a linha possui dados na Coluna A
+          if (cells && cells[0] && cells[0].v !== null) {
+            const name = String(cells[0].v).trim();
+            const category = (cells[1] && cells[1].v !== null) ? String(cells[1].v).trim() : "Outros";
+            
+            // Pega o valor formatado de moeda ou o valor bruto
+            let price = "";
+            if (cells[2] && cells[2] !== null) {
+              price = cells[2].f ? cells[2].f : String(cells[2].v);
+            }
+
+            // Descarta o cabeçalho "Ingrediente" caso venha na API
+            if (name.toLowerCase() !== "ingrediente") {
+              rawData.push({
+                name: name,
+                category: category,
+                price: price,
+                isExtra: false
+              });
+            }
+          }
+        });
+
         render();
       } catch (err) {
-        document.getElementById("itemsContainer").innerHTML = `<div class="loading-msg" style="color:red;">Erro ao carregar dados da planilha.</div>`;
+        document.getElementById("itemsContainer").innerHTML = `<div class="loading-msg" style="color:red;">Erro ao carregar os dados via API da planilha.</div>`;
       }
     }
 
-    /**
-     * Salva o estado atual das quantidades e itens no localStorage do navegador
-     */
     function saveState() {
       localStorage.setItem("comprasInsumosState", JSON.stringify(savedState));
       localStorage.setItem("comprasExtraItems", JSON.stringify(extraItems));
     }
 
-    /**
-     * Adiciona um novo item temporário à lista da compra
-     */
     function addExtraItem(e) {
       e.preventDefault();
       const input = document.getElementById("extraItemInput");
@@ -351,7 +319,6 @@
       
       if (!name) return;
 
-      // Impede duplicidades ignorando maiúsculas e minúsculas
       const exists = rawData.some(i => i.name.toLowerCase() === name.toLowerCase()) || 
                      extraItems.some(i => i.name.toLowerCase() === name.toLowerCase());
 
@@ -369,14 +336,10 @@
       input.value = "";
     }
 
-    /**
-     * Atualiza a quantidade digitada de um determinado item
-     */
     function updateQty(itemName, val) {
       if (!savedState[itemName]) savedState[itemName] = { qty: "", done: false };
       savedState[itemName].qty = val;
       
-      // Se a quantidade for apagada, limpa a seleção do checkbox
       if (!val.trim()) {
         savedState[itemName].done = false;
       }
@@ -385,9 +348,6 @@
       render();
     }
 
-    /**
-     * Alterna o status do Checkbox (comprado / pendente)
-     */
     function toggleDone(itemName) {
       if (!savedState[itemName]) savedState[itemName] = { qty: "", done: false };
       savedState[itemName].done = !savedState[itemName].done;
@@ -395,9 +355,6 @@
       render();
     }
 
-    /**
-     * Alterna entre "Ver todos" e "Ver só o que comprar"
-     */
     function toggleFilterToBuy() {
       filterOnlyToBuy = !filterOnlyToBuy;
       const btn = document.getElementById("btnFilterToBuy");
@@ -411,9 +368,6 @@
       render();
     }
 
-    /**
-     * Esconde/Mostra os itens que já foram marcados no checkbox
-     */
     function toggleHideCompleted() {
       hideCompleted = !hideCompleted;
       const btn = document.getElementById("btnHideCompleted");
@@ -426,9 +380,6 @@
       }
     }
 
-    /**
-     * Alterna a exibição entre Categorias e Ordem Alfabética
-     */
     function toggleViewMode() {
       viewAlphabetical = !viewAlphabetical;
       const btn = document.getElementById("btnToggleViewMode");
@@ -440,9 +391,6 @@
       render();
     }
 
-    /**
-     * Reseta completamente os dados salvos para uma nova compra
-     */
     function resetAll() {
       if (confirm("Deseja zerar todas as quantidades, marcações e itens extras para iniciar uma nova compra?")) {
         savedState = {};
@@ -452,9 +400,6 @@
       }
     }
 
-    /**
-     * Agrupa a lista de objetos por Categoria
-     */
     function groupByCategory(items) {
       return items.reduce((acc, item) => {
         (acc[item.category] = acc[item.category] || []).push(item);
@@ -462,9 +407,6 @@
       }, {});
     }
 
-    /**
-     * Função Principal de Renderização da Interface
-     */
     function render() {
       const container = document.getElementById("itemsContainer");
       container.innerHTML = "";
@@ -472,7 +414,6 @@
       const query = document.getElementById("searchInput").value.toLowerCase();
       const allItems = [...rawData, ...extraItems];
 
-      // Aplica busca por nome/categoria e filtro de itens com quantidade
       const filtered = allItems.filter(item => {
         const itemState = savedState[item.name] || { qty: "", done: false };
         const hasQty = itemState.qty && itemState.qty.trim() !== "";
@@ -488,7 +429,6 @@
         return;
       }
 
-      // MODO 1: Exibição Alfabética Direta
       if (viewAlphabetical) {
         filtered.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
         
@@ -500,9 +440,7 @@
         });
         
         container.appendChild(cardDiv);
-      } 
-      // MODO 2: Exibição Agrupada por Categoria
-      else {
+      } else {
         const grouped = groupByCategory(filtered);
 
         for (const [catName, items] of Object.entries(grouped)) {
@@ -523,9 +461,6 @@
       }
     }
 
-    /**
-     * Desenha a linha correspondente a um único insumo
-     */
     function renderRow(item, parentContainer) {
       const itemState = savedState[item.name] || { qty: "", done: false };
       const hasQty = itemState.qty && itemState.qty.trim() !== "";
@@ -533,7 +468,6 @@
       const row = document.createElement("div");
       row.className = `item-row ${hasQty ? 'has-qty' : ''} ${itemState.done ? 'completed' : ''}`;
 
-      // Monta estrutura DOM evitando erros de aspas/caracteres no HTML inline
       const itemLeft = document.createElement("div");
       itemLeft.className = "item-left";
 
@@ -582,7 +516,6 @@
       parentContainer.appendChild(row);
     }
 
-    // Inicialização da aplicação ao carregar a página
     loadData();
   </script>
 </body>
